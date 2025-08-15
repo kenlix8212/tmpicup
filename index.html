@@ -1,0 +1,320 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Temu Local Cropper (3:4 vertical & 1:1)</title>
+  <link href="https://cdn.jsdelivr.net/npm/cropperjs@1.5.13/dist/cropper.min.css" rel="stylesheet">
+  <style>
+    :root{--bg:#0b1220;--card:#0f172a;--border:#1f2a3b;--text:#e5e7eb;--muted:#9aa6b2;--accent:#22c55e}
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial}
+    header{padding:12px 16px;border-bottom:1px solid var(--border);background:linear-gradient(90deg,#0b1220,#111827)}
+    main{display:grid;grid-template-columns:340px 1fr;gap:14px;padding:14px}
+    .panel{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px}
+    h3{margin:6px 0 10px 0;font-size:15px}
+    label{display:block;font-size:12px;color:#cbd5e1;margin:6px 0 4px}
+    input,select,button{border-radius:10px;border:1px solid var(--border);background:#0b1220;color:var(--text);padding:8px 10px;font-size:13px}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    .btn{cursor:pointer}
+    .btn.primary{background:#16a34a;border-color:#16a34a;color:#fff}
+    .btn.secondary{background:#0b1220}
+    .btn:disabled{opacity:.6;cursor:not-allowed}
+    .bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    .thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:8px;max-height:50vh;overflow:auto;margin-top:8px}
+    .thumb{border:2px solid transparent;border-radius:8px;padding:2px;background:#0b1220;cursor:pointer}
+    .thumb.active{border-color:var(--accent);background:#072d1c}
+    .thumb img{width:100%;display:block;border-radius:6px}
+    #canvasWrap{display:flex;align-items:center;justify-content:center;height:70vh;background:#0b1220;border:1px dashed #263248;border-radius:12px;overflow:hidden}
+    #previewImg{max-width:100%;max-height:100%}
+    .hint{font-size:12px;color:var(--muted)}
+  </style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <strong>Temu Local Cropper — 3:4 vertical & 1:1</strong>
+    <span class="hint">Drag images → crop → save into a chosen folder by SPU. Remembers last-used ratio. Default size 1500×2000 for 3:4.</span>
+  </div>
+</header>
+<main>
+  <section class="panel">
+    <h3>Images & Settings</h3>
+    <label>Choose or drag images
+      <input id="fileInput" type="file" accept="image/*" multiple>
+    </label>
+    <div class="row">
+      <div>
+        <label>SPU</label>
+        <input id="spu" type="text" placeholder="e.g., spu123">
+      </div>
+      <div>
+        <label>Start index</label>
+        <input id="startIndex" type="number" value="1" min="1">
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label>Aspect ratio</label>
+        <select id="ratio">
+          <option value="0.75">3:4 (vertical)</option>
+          <option value="1">1:1 (square)</option>
+        </select>
+      </div>
+      <div>
+        <label>Output size (WxH)</label>
+        <input id="size" type="text" value="1500x2000" placeholder="e.g., 1500x2000 or 1500x1500">
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label>JPEG quality (0.5–1)</label>
+        <input id="quality" type="number" value="0.9" min="0.5" max="1" step="0.05">
+      </div>
+      <div>
+        <label>Filename suffix</label>
+        <input id="suffix" type="text" value="_auto" placeholder="_auto or _1500x2000">
+      </div>
+    </div>
+
+    <h3>Save to Local Folder</h3>
+    <div class="bar" style="margin-bottom:6px">
+      <button id="chooseFolder" class="btn">Choose base folder…</button>
+      <span id="folderLabel" class="hint">No folder chosen</span>
+    </div>
+    <div class="bar">
+      <button id="saveCurrent" class="btn primary">Save current</button>
+      <button id="saveAll" class="btn secondary">Save all</button>
+      <button id="downloadCurrent" class="btn secondary">Download current</button>
+      <button id="clear" class="btn secondary">Clear</button>
+    </div>
+
+    <div class="thumbs" id="thumbs"></div>
+  </section>
+
+  <section class="panel">
+    <div id="canvasWrap">
+      <img id="previewImg" alt="Preview">
+    </div>
+    <div class="hint" style="margin-top:8px">
+      The base folder is remembered for this session. Each batch saves under <code>/{SPU}/</code>. The tool remembers your last-used ratio between visits.
+    </div>
+  </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/cropperjs@1.5.13/dist/cropper.min.js"></script>
+<script>
+let files = [];
+let activeIndex = -1;
+let cropper = null;
+let baseDir = null;
+let baseDirName = '';
+
+const $ = (id)=>document.getElementById(id);
+const fileInput = $('fileInput');
+const thumbs = $('thumbs');
+const previewImg = $('previewImg');
+const ratioSel = $('ratio');
+const sizeInput = $('size');
+const spuInput = $('spu');
+const startIndexInput = $('startIndex');
+const qualityInput = $('quality');
+const suffixInput = $('suffix');
+const folderLabel = $('folderLabel');
+
+// --- Remember last-used ratio & size ---
+(function initPersisted(){
+  try{
+    const r = localStorage.getItem('temu_ratio');
+    const s = localStorage.getItem('temu_size');
+    if (r === '1' || r === '0.75') ratioSel.value = r;
+    if (s && typeof s === 'string') sizeInput.value = s;
+  }catch(e){}
+})();
+
+function persistRatioAndSize(){
+  try{
+    localStorage.setItem('temu_ratio', ratioSel.value);
+    localStorage.setItem('temu_size', sizeInput.value);
+  }catch(e){}
+}
+
+function renderThumbs(){
+  thumbs.innerHTML = '';
+  files.forEach((f,i)=>{
+    const d = document.createElement('div');
+    d.className = 'thumb' + (i===activeIndex ? ' active':'');
+    const im = document.createElement('img');
+    im.src = f.url;
+    d.appendChild(im);
+    d.addEventListener('click', ()=> setActive(i));
+    thumbs.appendChild(d);
+  });
+}
+
+function setActive(i){
+  activeIndex = i;
+  renderThumbs();
+  if (cropper){ cropper.destroy(); cropper=null; }
+  previewImg.src = files[i].url;
+  previewImg.onload = ()=>{
+    cropper = new Cropper(previewImg, {
+      aspectRatio: parseFloat(ratioSel.value),
+      viewMode: 1,
+      autoCropArea: 1,
+      background: false
+    });
+  };
+}
+
+function parseSize(v){
+  const m = (v||'').trim().toLowerCase().match(/^(\d+)\s*x\s*(\d+)$/);
+  if (!m) return null;
+  return { w: parseInt(m[1],10), h: parseInt(m[2],10) };
+}
+
+function ratioMatchesSize(ratio, w, h){
+  if (!w || !h) return false;
+  const r = w / h;
+  return Math.abs(r - ratio) < 0.001;
+}
+
+function suggestSizeForRatio(ratio){
+  return ratio === 1 ? '1500x1500' : '1500x2000';
+}
+
+async function getCroppedBlob(){
+  if (activeIndex<0 || !cropper) throw new Error('Pick an image first');
+  const size = parseSize(sizeInput.value);
+  if (!size) throw new Error('Bad output size, e.g., 1500x2000 or 1500x1500');
+  const desiredRatio = parseFloat(ratioSel.value);
+  if (!ratioMatchesSize(desiredRatio, size.w, size.h)){
+    throw new Error('Output size must match ratio. Try ' + suggestSizeForRatio(desiredRatio));
+  }
+  const q = Math.max(0.5, Math.min(1, parseFloat(qualityInput.value)||0.9));
+  const canvas = cropper.getCroppedCanvas({ width:size.w, height:size.h });
+  const blob = await new Promise(res=> canvas.toBlob(res, 'image/jpeg', q));
+  return blob;
+}
+
+function outputName(i){
+  const spu = spuInput.value.trim() || 'spu';
+  const baseIndex = parseInt(startIndexInput.value)||1;
+  const idx = baseIndex + i;
+  const suffix = suffixInput.value || '_auto';
+  return `${spu}-${String(idx).padStart(2,'0')}${suffix}.jpg`;
+}
+
+async function chooseFolder(){
+  if (!('showDirectoryPicker' in window)){
+    alert('Your browser does not support folder access (File System Access API). Use Chrome/Edge latest, or use Download.');
+    return;
+  }
+  baseDir = await window.showDirectoryPicker({ id: 'temu-local-cropper' });
+  baseDirName = baseDir.name || 'selected folder';
+  folderLabel.textContent = 'Base folder: ' + baseDirName;
+}
+
+async function ensureSpuSubdir(){
+  if (!baseDir) throw new Error('Choose base folder first');
+  const spu = spuInput.value.trim() || 'spu';
+  return await baseDir.getDirectoryHandle(spu, { create: true });
+}
+
+async function saveCurrentToFolder(){
+  try{
+    const i = activeIndex;
+    if (i<0) throw new Error('Pick an image first');
+    const blob = await getCroppedBlob();
+    const subdir = await ensureSpuSubdir();
+    const name = outputName(i);
+    const fh = await subdir.getFileHandle(name, { create:true });
+    const w = await fh.createWritable();
+    await w.write(blob);
+    await w.close();
+    alert('Saved: ' + (subdir.name || 'SPU') + '/' + name);
+  }catch(err){
+    alert(err.message || String(err));
+  }
+}
+
+async function saveAllToFolder(){
+  if (!files.length) return alert('Add images first');
+  try{
+    const subdir = await ensureSpuSubdir();
+    for (let i=0;i<files.length;i++){
+      setActive(i);
+      await new Promise(r=>setTimeout(r,200));
+      const blob = await getCroppedBlob();
+      const name = outputName(i);
+      const fh = await subdir.getFileHandle(name, { create:true });
+      const w = await fh.createWritable();
+      await w.write(blob);
+      await w.close();
+      await new Promise(r=>setTimeout(r,60));
+    }
+    alert('All saved to: ' + (subdir.name || 'SPU'));
+  }catch(err){
+    alert(err.message || String(err));
+  }
+}
+
+async function downloadCurrent(){
+  try{
+    const i = activeIndex;
+    if (i<0) throw new Error('Pick an image first');
+    const blob = await getCroppedBlob();
+    const a = document.createElement('a');
+    a.download = outputName(i);
+    a.href = URL.createObjectURL(blob);
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }catch(err){
+    alert(err.message || String(err));
+  }
+}
+
+// events
+fileInput.addEventListener('change', e=>{
+  files = Array.from(e.target.files).map(f=>({file:f,url:URL.createObjectURL(f)}));
+  if (files.length>0) activeIndex=0;
+  renderThumbs();
+  if (files.length>0) setActive(0);
+});
+document.addEventListener('dragover', e=> e.preventDefault());
+document.addEventListener('drop', e=>{
+  e.preventDefault();
+  if (e.dataTransfer.files && e.dataTransfer.files.length){
+    const added = Array.from(e.dataTransfer.files).filter(f=>/^image\//.test(f.type)).map(f=>({file:f,url:URL.createObjectURL(f)}));
+    files = files.concat(added);
+    if (activeIndex<0 && files.length>0) activeIndex=0;
+    renderThumbs();
+    if (files.length>0) setActive(activeIndex);
+  }
+});
+ratioSel.addEventListener('change', ()=>{
+  const r = parseFloat(ratioSel.value);
+  // If the typed size doesn't match, auto-suggest a matching default
+  const sz = parseSize(sizeInput.value);
+  if (!sz || !ratioMatchesSize(r, sz.w, sz.h)){
+    sizeInput.value = suggestSizeForRatio(r);
+  }
+  persistRatioAndSize();
+  if (cropper) cropper.setAspectRatio(r);
+});
+sizeInput.addEventListener('change', persistRatioAndSize);
+
+$('chooseFolder').addEventListener('click', chooseFolder);
+$('saveCurrent').addEventListener('click', saveCurrentToFolder);
+$('saveAll').addEventListener('click', saveAllToFolder);
+$('downloadCurrent').addEventListener('click', downloadCurrent);
+$('clear').addEventListener('click', ()=>{
+  if (cropper){ cropper.destroy(); cropper = null; }
+  files.forEach(f=> URL.revokeObjectURL(f.url));
+  files = []; activeIndex=-1; renderThumbs(); previewImg.removeAttribute('src');
+  folderLabel.textContent = baseDir ? ('Base folder: ' + (baseDir.name || 'selected folder')) : 'No folder chosen';
+});
+</script>
+</body>
+</html>
