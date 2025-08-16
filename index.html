@@ -1,154 +1,242 @@
-
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Temu Local Cropper (3:4 vertical & 1:1)</title>
+  <title>本地批量裁剪 1:1 / 3:4 → 导出JPEG（适配 Temu）</title>
   <link href="https://cdn.jsdelivr.net/npm/cropperjs@1.5.13/dist/cropper.min.css" rel="stylesheet">
   <style>
-    :root{--bg:#0b1220;--card:#0f172a;--border:#1f2a3b;--text:#e5e7eb;--muted:#9aa6b2;--accent:#22c55e}
+    :root{--accent:#111827;--accent-2:#374151;--border:#e5e7eb;--bg:#f3f4f6;}
     *{box-sizing:border-box}
-    body{margin:0;background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial}
-    header{padding:12px 16px;border-bottom:1px solid var(--border);background:linear-gradient(90deg,#0b1220,#111827)}
-    main{display:grid;grid-template-columns:340px 1fr;gap:14px;padding:14px}
-    .panel{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px}
-    h3{margin:6px 0 10px 0;font-size:15px}
-    label{display:block;font-size:12px;color:#cbd5e1;margin:6px 0 4px}
-    input,select,button{border-radius:10px;border:1px solid var(--border);background:#0b1220;color:var(--text);padding:8px 10px;font-size:13px}
-    .row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-    .btn{cursor:pointer}
-    .btn.primary{background:#16a34a;border-color:#16a34a;color:#fff}
-    .btn.secondary{background:#0b1220}
-    .btn:disabled{opacity:.6;cursor:not-allowed}
-    .bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-    .thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:8px;max-height:50vh;overflow:auto;margin-top:8px}
-    .thumb{border:2px solid transparent;border-radius:8px;padding:2px;background:#0b1220;cursor:pointer}
-    .thumb.active{border-color:var(--accent);background:#072d1c}
-    .thumb img{width:100%;display:block;border-radius:6px}
-    #canvasWrap{display:flex;align-items:center;justify-content:center;height:70vh;background:#0b1220;border:1px dashed #263248;border-radius:12px;overflow:hidden}
-    #previewImg{max-width:100%;max-height:100%}
-    .hint{font-size:12px;color:var(--muted)}
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif; margin: 0; }
+    header { padding: 12px 16px; background: #111827; color: #fff; }
+    main { display: grid; grid-template-columns: 320px 1fr; gap: 16px; padding: 16px; }
+    .panel { border: 1px solid var(--border); border-radius: 8px; padding: 12px; background:#fff; }
+    .thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px,1fr)); gap: 8px; max-height: 60vh; overflow: auto; }
+    .thumb { position:relative; border: 2px solid transparent; border-radius: 6px; padding: 2px; cursor: pointer; background:#f9fafb; }
+    .thumb.active { border-color: #3b82f6; background:#eff6ff; }
+    .thumb img { width: 100%; display: block; border-radius: 4px; }
+    .thumb .close {position:absolute; right:4px; top:4px; width:20px; height:20px; line-height:18px; text-align:center; border-radius:10px; background:#111827; color:#fff; font-weight:700; font-size:12px; opacity:.8; display:none;}
+    .thumb:hover .close{display:block;}
+    .controls label { display:block; font-size: 13px; margin-top: 8px; }
+    .controls input[type="text"], .controls input[type="number"], .controls select { width: 100%; padding: 6px 8px; border-radius: 6px; border: 1px solid #d1d5db; }
+    .controls .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .btn { display:inline-flex; align-items:center; gap:6px; background:var(--accent); color:#fff; border:none; padding:8px 12px; border-radius:8px; cursor:pointer; }
+    .btn.secondary { background:var(--accent-2); }
+    .btn[disabled] { opacity:.5; cursor:not-allowed; }
+    #canvasWrap { display:flex; align-items:center; justify-content:center; height: 70vh; background:var(--bg); border-radius:8px; overflow:hidden; border:1px dashed var(--border); }
+    #previewImg { max-width:100%; max-height:100%; }
+    footer { padding: 12px 16px; color:#6b7280; font-size:12px; }
+    .bar { display:flex; align-items:center; gap:8px; flex-wrap: wrap; }
+    .hint { font-size: 12px; color:#cbd5e1; }
+    .toolbar{display:flex; gap:8px; flex-wrap:wrap; margin-top:8px}
+    .toast{position:fixed; left:50%; transform:translateX(-50%); bottom:14px; background:#111827; color:#fff; padding:10px 14px; border-radius:10px; font-size:13px; opacity:0; transition:opacity .2s, transform .2s; pointer-events:none}
+    .toast.show{opacity:1; transform:translate(-50%,-6px)}
+    .muted{color:#6b7280; font-size:12px}
+    .drop-block{user-select:none}
   </style>
 </head>
 <body>
 <header>
   <div class="bar">
-    <strong>Temu Local Cropper — 3:4 vertical & 1:1</strong>
-    <span class="hint">Drag images → crop → save into a chosen folder by SPU. Remembers last-used ratio. Default size 1500×2000 for 3:4.</span>
+    <strong>批量裁剪 1:1 / 3:4 → 导出 JPEG（本地运行，无需上传至服务器）</strong>
+    <span class="hint">拖入图片 → 选择比例与尺寸 → 逐张微调 → 保存到文件夹</span>
   </div>
 </header>
 <main>
   <section class="panel">
-    <h3>Images & Settings</h3>
-    <label>Choose or drag images
-      <input id="fileInput" type="file" accept="image/*" multiple>
-    </label>
-    <div class="row">
-      <div>
-        <label>SPU</label>
-        <input id="spu" type="text" placeholder="e.g., spu123">
+    <div class="controls">
+      <label>选择/拖入图片
+        <input id="fileInput" type="file" accept="image/*" multiple>
+      </label>
+      <div class="row">
+        <label>SPU（用于命名/子目录）
+          <input id="spu" type="text" placeholder="如：spu123">
+        </label>
+        <label>起始序号
+          <input id="startIndex" type="number" value="1" min="1">
+        </label>
       </div>
-      <div>
-        <label>Start index</label>
-        <input id="startIndex" type="number" value="1" min="1">
+      <div class="row">
+        <label>目标比例
+          <select id="ratio">
+            <option value="0.75">3:4（竖版，默认）</option>
+            <option value="1">1:1（方形）</option>
+          </select>
+        </label>
+        <label>输出尺寸（宽×高）
+          <input id="size" type="text" value="1500x2000" placeholder="如 1500x2000 或 1200x1200">
+        </label>
       </div>
-    </div>
-    <div class="row">
-      <div>
-        <label>Aspect ratio</label>
-        <select id="ratio">
-          <option value="0.75">3:4 (vertical)</option>
-          <option value="1">1:1 (square)</option>
-        </select>
+      <div class="row">
+        <label>JPEG 质量（0.5~1）
+          <input id="quality" type="number" value="0.9" min="0.5" max="1" step="0.05">
+        </label>
+        <label>文件名后缀
+          <input id="suffix" type="text" value="_auto" placeholder="如 _1500x2000 或 _auto">
+        </label>
       </div>
-      <div>
-        <label>Output size (WxH)</label>
-        <input id="size" type="text" value="1500x2000" placeholder="e.g., 1500x2000 or 1500x1500">
-      </div>
-    </div>
-    <div class="row">
-      <div>
-        <label>JPEG quality (0.5–1)</label>
-        <input id="quality" type="number" value="0.9" min="0.5" max="1" step="0.05">
-      </div>
-      <div>
-        <label>Filename suffix</label>
-        <input id="suffix" type="text" value="_auto" placeholder="_auto or _1500x2000">
-      </div>
-    </div>
 
-    <h3>Save to Local Folder</h3>
-    <div class="bar" style="margin-bottom:6px">
-      <button id="chooseFolder" class="btn">Choose base folder…</button>
-      <span id="folderLabel" class="hint">No folder chosen</span>
+      <div class="toolbar">
+        <button id="pickFolder" class="btn secondary">选择 Base 文件夹</button>
+        <button id="exportAll" class="btn">Save all（Ctrl+Enter）</button>
+        <button id="exportOne" class="btn secondary">保存当前</button>
+        <button id="clear" class="btn secondary">清空</button>
+      </div>
+      <div class="muted">已选文件夹：<span id="folderPath">未选择</span></div>
+      <hr>
+      <div class="thumbs drop-block" id="thumbs" title="此区域禁止拖入（避免重复添加）"></div>
     </div>
-    <div class="bar">
-      <button id="saveCurrent" class="btn primary">Save current</button>
-      <button id="saveAll" class="btn secondary">Save all</button>
-      <button id="downloadCurrent" class="btn secondary">Download current</button>
-      <button id="clear" class="btn secondary">Clear</button>
-    </div>
-
-    <div class="thumbs" id="thumbs"></div>
   </section>
-
   <section class="panel">
-    <div id="canvasWrap">
-      <img id="previewImg" alt="Preview">
+    <div id="canvasWrap" class="drop-target" title="可直接把图片从其它标签页拖到此区域">
+      <img id="previewImg" alt="预览将显示在这里">
     </div>
-    <div class="hint" style="margin-top:8px">
-      The base folder is remembered for this session. Each batch saves under <code>/{SPU}/</code>. The tool remembers your last-used ratio between visits.
-    </div>
+    <div class="muted" style="margin-top:8px">右键预览可删除当前；右键缩略图可删除；缩略图右上角“×”可删除。</div>
   </section>
 </main>
+<footer>
+  <div>⚙️ 操作提示：选择比例后，拖动/缩放裁剪框以对齐主体。保存成功后会在底部显示提示，并自动清空当前列表。</div>
+</footer>
+
+<div id="toast" class="toast">已保存</div>
 
 <script src="https://cdn.jsdelivr.net/npm/cropperjs@1.5.13/dist/cropper.min.js"></script>
 <script>
-let files = [];
+// ------- State -------
+let files = [];           // { file, url, key }
 let activeIndex = -1;
 let cropper = null;
-let baseDir = null;
-let baseDirName = '';
+let dirHandle = null;     // File System Access API directory handle
+const addedKeys = new Set();
 
-const $ = (id)=>document.getElementById(id);
-const fileInput = $('fileInput');
-const thumbs = $('thumbs');
-const previewImg = $('previewImg');
-const ratioSel = $('ratio');
-const sizeInput = $('size');
-const spuInput = $('spu');
-const startIndexInput = $('startIndex');
-const qualityInput = $('quality');
-const suffixInput = $('suffix');
-const folderLabel = $('folderLabel');
+// ------- Shorthands -------
+const el = (id)=>document.getElementById(id);
+const fileInput = el('fileInput');
+const thumbs = el('thumbs');
+const previewImg = el('previewImg');
+const ratioSel = el('ratio');
+const sizeInput = el('size');
+const spuInput = el('spu');
+const startIndexInput = el('startIndex');
+const qualityInput = el('quality');
+const suffixInput = el('suffix');
+const toast = el('toast');
+const canvasWrap = el('canvasWrap');
+const folderPath = el('folderPath');
 
-// --- Remember last-used ratio & size ---
-(function initPersisted(){
+// ------- Persist last settings -------
+const LAST_RATIO_KEY = 'tmpicup:lastRatio';
+const LAST_SIZE_1 = 'tmpicup:size:1';
+const LAST_SIZE_075 = 'tmpicup:size:0.75';
+
+function loadPrefs(){
+  const lastRatio = localStorage.getItem(LAST_RATIO_KEY);
+  if(lastRatio){
+    ratioSel.value = lastRatio;
+    const size = localStorage.getItem(lastRatio==='1'?LAST_SIZE_1:LAST_SIZE_075);
+    if(size) sizeInput.value = size;
+  }else{
+    ratioSel.value = '0.75';
+    sizeInput.value = '1500x2000';
+  }
+}
+function savePrefs(){
+  localStorage.setItem(LAST_RATIO_KEY, ratioSel.value);
+  const key = ratioSel.value==='1'?LAST_SIZE_1:LAST_SIZE_075;
+  localStorage.setItem(key, sizeInput.value.trim());
+}
+loadPrefs();
+
+// ------- IndexedDB (store dirHandle) -------
+const DB_NAME='tmpicup-db', STORE='kv';
+function openDB(){
+  return new Promise((resolve,reject)=>{
+    const req = indexedDB.open(DB_NAME,1);
+    req.onupgradeneeded = e=>{
+      e.target.result.createObjectStore(STORE);
+    };
+    req.onsuccess = ()=> resolve(req.result);
+    req.onerror = ()=> reject(req.error);
+  });
+}
+async function idbSet(key, val){
+  const db = await openDB();
+  return new Promise((res,rej)=>{
+    const tx = db.transaction(STORE,'readwrite');
+    tx.objectStore(STORE).put(val, key);
+    tx.oncomplete = ()=> res();
+    tx.onerror = ()=> rej(tx.error);
+  });
+}
+async function idbGet(key){
+  const db = await openDB();
+  return new Promise((res,rej)=>{
+    const tx = db.transaction(STORE,'readonly');
+    const req = tx.objectStore(STORE).get(key);
+    req.onsuccess = ()=> res(req.result);
+    req.onerror = ()=> rej(req.error);
+  });
+}
+
+const DIR_KEY='baseDirHandle';
+
+async function restoreDirHandle(){
+  if(!('showDirectoryPicker' in window)) return;
   try{
-    const r = localStorage.getItem('temu_ratio');
-    const s = localStorage.getItem('temu_size');
-    if (r === '1' || r === '0.75') ratioSel.value = r;
-    if (s && typeof s === 'string') sizeInput.value = s;
-  }catch(e){}
-})();
+    const h = await idbGet(DIR_KEY);
+    if(!h) return;
+    // Check permission
+    let perm = await h.queryPermission({mode:'readwrite'});
+    if(perm === 'prompt'){
+      // avoid disruptive prompt; do not request automatically
+      folderPath.textContent = `${h.name}（未授权，点击「选择 Base 文件夹」重新授权）`;
+      dirHandle = h;
+      return;
+    }
+    if(perm === 'granted'){
+      dirHandle = h;
+      folderPath.textContent = `${h.name}`;
+      return;
+    }
+  }catch(e){
+    console.warn('restore dir handle failed', e);
+  }
+}
 
-function persistRatioAndSize(){
+async function persistAndShow(handle){
   try{
-    localStorage.setItem('temu_ratio', ratioSel.value);
-    localStorage.setItem('temu_size', sizeInput.value);
-  }catch(e){}
+    await navigator.storage?.persist?.();
+  }catch{}
+  await idbSet(DIR_KEY, handle);
+  folderPath.textContent = handle.name || '已选择';
+}
+
+// ------- UI helpers -------
+function showToast(msg='已保存'){
+  toast.textContent = msg;
+  toast.classList.add('show');
+  setTimeout(()=> toast.classList.remove('show'), 1800);
 }
 
 function renderThumbs(){
   thumbs.innerHTML = '';
-  files.forEach((f,i)=>{
+  files.forEach((f, i)=>{
     const d = document.createElement('div');
     d.className = 'thumb' + (i===activeIndex ? ' active':'');
     const im = document.createElement('img');
     im.src = f.url;
+    const close = document.createElement('div');
+    close.className='close';
+    close.textContent='×';
+    close.title='删除此图';
+    close.addEventListener('click', (ev)=>{ ev.stopPropagation(); removeAt(i); });
     d.appendChild(im);
+    d.appendChild(close);
     d.addEventListener('click', ()=> setActive(i));
+    d.addEventListener('contextmenu', (e)=>{ e.preventDefault(); removeAt(i); });
+    d.addEventListener('dragover', (e)=>{ e.preventDefault(); e.dataTransfer.dropEffect='none'; });
+    d.addEventListener('drop', (e)=>{ e.preventDefault(); });
     thumbs.appendChild(d);
   });
 }
@@ -156,8 +244,10 @@ function renderThumbs(){
 function setActive(i){
   activeIndex = i;
   renderThumbs();
-  if (cropper){ cropper.destroy(); cropper=null; }
-  previewImg.src = files[i].url;
+  if (cropper) { cropper.destroy(); cropper = null; }
+  const item = files[i];
+  if(!item) return;
+  previewImg.src = item.url;
   previewImg.onload = ()=>{
     cropper = new Cropper(previewImg, {
       aspectRatio: parseFloat(ratioSel.value),
@@ -169,152 +259,219 @@ function setActive(i){
 }
 
 function parseSize(v){
-  const m = (v||'').trim().toLowerCase().match(/^(\d+)\s*x\s*(\d+)$/);
+  const m = v.trim().toLowerCase().match(/^(\d+)\s*x\s*(\d+)$/);
   if (!m) return null;
-  return { w: parseInt(m[1],10), h: parseInt(m[2],10) };
+  return {w: parseInt(m[1]), h: parseInt(m[2])};
 }
 
-function ratioMatchesSize(ratio, w, h){
-  if (!w || !h) return false;
-  const r = w / h;
-  return Math.abs(r - ratio) < 0.001;
+function keyOfFile(f){
+  return [f.name, f.size, f.type, f.lastModified].join('|');
 }
 
-function suggestSizeForRatio(ratio){
-  return ratio === 1 ? '1500x1500' : '1500x2000';
-}
-
-async function getCroppedBlob(){
-  if (activeIndex<0 || !cropper) throw new Error('Pick an image first');
-  const size = parseSize(sizeInput.value);
-  if (!size) throw new Error('Bad output size, e.g., 1500x2000 or 1500x1500');
-  const desiredRatio = parseFloat(ratioSel.value);
-  if (!ratioMatchesSize(desiredRatio, size.w, size.h)){
-    throw new Error('Output size must match ratio. Try ' + suggestSizeForRatio(desiredRatio));
+function addFiles(blobs, makeActiveLatest=false){
+  const added = [];
+  for(const f of blobs){
+    const key = keyOfFile(f);
+    if(addedKeys.has(key)) continue;
+    if(!/^image\//.test(f.type)) continue;
+    const url = URL.createObjectURL(f);
+    files.push({file:f, url, key});
+    addedKeys.add(key);
+    added.push(files.length-1);
   }
-  const q = Math.max(0.5, Math.min(1, parseFloat(qualityInput.value)||0.9));
-  const canvas = cropper.getCroppedCanvas({ width:size.w, height:size.h });
-  const blob = await new Promise(res=> canvas.toBlob(res, 'image/jpeg', q));
-  return blob;
-}
-
-function outputName(i){
-  const spu = spuInput.value.trim() || 'spu';
-  const baseIndex = parseInt(startIndexInput.value)||1;
-  const idx = baseIndex + i;
-  const suffix = suffixInput.value || '_auto';
-  return `${spu}-${String(idx).padStart(2,'0')}${suffix}.jpg`;
-}
-
-async function chooseFolder(){
-  if (!('showDirectoryPicker' in window)){
-    alert('Your browser does not support folder access (File System Access API). Use Chrome/Edge latest, or use Download.');
-    return;
-  }
-  baseDir = await window.showDirectoryPicker({ id: 'temu-local-cropper' });
-  baseDirName = baseDir.name || 'selected folder';
-  folderLabel.textContent = 'Base folder: ' + baseDirName;
-}
-
-async function ensureSpuSubdir(){
-  if (!baseDir) throw new Error('Choose base folder first');
-  const spu = spuInput.value.trim() || 'spu';
-  return await baseDir.getDirectoryHandle(spu, { create: true });
-}
-
-async function saveCurrentToFolder(){
-  try{
-    const i = activeIndex;
-    if (i<0) throw new Error('Pick an image first');
-    const blob = await getCroppedBlob();
-    const subdir = await ensureSpuSubdir();
-    const name = outputName(i);
-    const fh = await subdir.getFileHandle(name, { create:true });
-    const w = await fh.createWritable();
-    await w.write(blob);
-    await w.close();
-    alert('Saved: ' + (subdir.name || 'SPU') + '/' + name);
-  }catch(err){
-    alert(err.message || String(err));
-  }
-}
-
-async function saveAllToFolder(){
-  if (!files.length) return alert('Add images first');
-  try{
-    const subdir = await ensureSpuSubdir();
-    for (let i=0;i<files.length;i++){
-      setActive(i);
-      await new Promise(r=>setTimeout(r,200));
-      const blob = await getCroppedBlob();
-      const name = outputName(i);
-      const fh = await subdir.getFileHandle(name, { create:true });
-      const w = await fh.createWritable();
-      await w.write(blob);
-      await w.close();
-      await new Promise(r=>setTimeout(r,60));
-    }
-    alert('All saved to: ' + (subdir.name || 'SPU'));
-  }catch(err){
-    alert(err.message || String(err));
-  }
-}
-
-async function downloadCurrent(){
-  try{
-    const i = activeIndex;
-    if (i<0) throw new Error('Pick an image first');
-    const blob = await getCroppedBlob();
-    const a = document.createElement('a');
-    a.download = outputName(i);
-    a.href = URL.createObjectURL(blob);
-    a.click();
-    URL.revokeObjectURL(a.href);
-  }catch(err){
-    alert(err.message || String(err));
-  }
-}
-
-// events
-fileInput.addEventListener('change', e=>{
-  files = Array.from(e.target.files).map(f=>({file:f,url:URL.createObjectURL(f)}));
-  if (files.length>0) activeIndex=0;
+  if(files.length>0 && activeIndex<0) activeIndex = 0;
   renderThumbs();
-  if (files.length>0) setActive(0);
-});
-document.addEventListener('dragover', e=> e.preventDefault());
-document.addEventListener('drop', e=>{
-  e.preventDefault();
-  if (e.dataTransfer.files && e.dataTransfer.files.length){
-    const added = Array.from(e.dataTransfer.files).filter(f=>/^image\//.test(f.type)).map(f=>({file:f,url:URL.createObjectURL(f)}));
-    files = files.concat(added);
-    if (activeIndex<0 && files.length>0) activeIndex=0;
-    renderThumbs();
-    if (files.length>0) setActive(activeIndex);
+  if(makeActiveLatest && added.length){
+    setActive(added[added.length-1]);
+  }else if(files.length>0){
+    setActive(activeIndex);
   }
-});
-ratioSel.addEventListener('change', ()=>{
-  const r = parseFloat(ratioSel.value);
-  // If the typed size doesn't match, auto-suggest a matching default
-  const sz = parseSize(sizeInput.value);
-  if (!sz || !ratioMatchesSize(r, sz.w, sz.h)){
-    sizeInput.value = suggestSizeForRatio(r);
-  }
-  persistRatioAndSize();
-  if (cropper) cropper.setAspectRatio(r);
-});
-sizeInput.addEventListener('change', persistRatioAndSize);
+}
 
-$('chooseFolder').addEventListener('click', chooseFolder);
-$('saveCurrent').addEventListener('click', saveCurrentToFolder);
-$('saveAll').addEventListener('click', saveAllToFolder);
-$('downloadCurrent').addEventListener('click', downloadCurrent);
-$('clear').addEventListener('click', ()=>{
-  if (cropper){ cropper.destroy(); cropper = null; }
+function removeAt(i){
+  const it = files[i];
+  if(!it) return;
+  URL.revokeObjectURL(it.url);
+  addedKeys.delete(it.key);
+  files.splice(i,1);
+  if(activeIndex>=files.length) activeIndex = files.length-1;
+  renderThumbs();
+  if(files.length>0) setActive(Math.max(0, activeIndex));
+  else {
+    if (cropper) { cropper.destroy(); cropper = null; }
+    previewImg.removeAttribute('src');
+    activeIndex = -1;
+  }
+}
+
+// ------- Export helpers -------
+async function canvasToJpegBlob(cropper, size, quality){
+  const canvas = cropper.getCroppedCanvas({ width:size.w, height:size.h });
+  return await new Promise(res=> canvas.toBlob(res, 'image/jpeg', quality));
+}
+
+async function ensureSubdir(handle, subdir){
+  try{
+    return await handle.getDirectoryHandle(subdir, {create:true});
+  }catch(e){ console.error(e); return null; }
+}
+
+async function saveBlobToFS(dir, filename, blob){
+  const f = await dir.getFileHandle(filename, {create:true});
+  const w = await f.createWritable();
+  await w.write(blob);
+  await w.close();
+}
+
+// ------- Actions -------
+async function exportCurrent(toFS=true){
+  if (activeIndex<0 || !cropper) { showToast('请先选择一张图片'); return; }
+  const size = parseSize(sizeInput.value);
+  if (!size) { showToast('输出尺寸格式不正确'); return; }
+  const q = Math.max(0.5, Math.min(1, parseFloat(qualityInput.value)||0.9));
+  const spu = (spuInput.value.trim() || 'spu').replace(/[^\w\-]/g,'');
+  const baseIndex = parseInt(startIndexInput.value)||1;
+  const idx = baseIndex + activeIndex;
+  const suffix = suffixInput.value || '_auto';
+  const name = `${spu}-${String(idx).padStart(2,'0')}${suffix}.jpg`;
+
+  const blob = await canvasToJpegBlob(cropper, size, q);
+
+  if(toFS && dirHandle?.kind === 'directory'){
+    try{
+      const sub = await ensureSubdir(dirHandle, spu);
+      if(sub){
+        await saveBlobToFS(sub, name, blob);
+        return { ok:true, filename:name, path:`${spu}/${name}`, method:'fs' };
+      }
+    }catch(e){
+      console.warn('FS save failed, fallback to download', e);
+    }
+  }
+  const a = document.createElement('a');
+  a.download = name;
+  a.href = URL.createObjectURL(blob);
+  a.click();
+  URL.revokeObjectURL(a.href);
+  return { ok:true, filename:name, method:'download' };
+}
+
+async function exportAll(){
+  if (files.length===0){ showToast('请先选择图片'); return; }
+  const size = parseSize(sizeInput.value);
+  if (!size){ showToast('输出尺寸格式不正确'); return; }
+  savePrefs();
+
+  for (let i=0;i<files.length;i++){
+    setActive(i);
+    await new Promise(r=> setTimeout(r, 250));
+    await exportCurrent(true);
+    await new Promise(r=> setTimeout(r, 80));
+  }
+  showToast('全部保存完成 ✅');
+  clearAll();
+}
+
+function clearAll(){
+  if (cropper) { cropper.destroy(); cropper = null; }
   files.forEach(f=> URL.revokeObjectURL(f.url));
   files = []; activeIndex=-1; renderThumbs(); previewImg.removeAttribute('src');
-  folderLabel.textContent = baseDir ? ('Base folder: ' + (baseDir.name || 'selected folder')) : 'No folder chosen';
+  addedKeys.clear();
+}
+
+// ------- Events -------
+fileInput.addEventListener('change', e=>{
+  addFiles(Array.from(e.target.files));
 });
+
+ratioSel.addEventListener('change', ()=>{
+  if (cropper){
+    cropper.setAspectRatio(parseFloat(ratioSel.value));
+  }
+  if(ratioSel.value==='0.75' && !localStorage.getItem(LAST_SIZE_075)){
+    sizeInput.value = '1500x2000';
+  }else if(ratioSel.value==='1' && !localStorage.getItem(LAST_SIZE_1)){
+    sizeInput.value = '1200x1200';
+  }else{
+    const key = ratioSel.value==='1'?LAST_SIZE_1:LAST_SIZE_075;
+    const saved = localStorage.getItem(key);
+    if(saved) sizeInput.value = saved;
+  }
+});
+
+el('exportOne').addEventListener('click', ()=> exportCurrent(true).then(()=>showToast('已保存当前')));
+el('exportAll').addEventListener('click', exportAll);
+el('clear').addEventListener('click', clearAll);
+
+// 预览右键删除当前
+previewImg.addEventListener('contextmenu', (e)=>{
+  e.preventDefault();
+  if(activeIndex>=0) removeAt(activeIndex);
+});
+
+// 整页拖拽支持
+document.addEventListener('dragover', e=>{ e.preventDefault(); });
+document.addEventListener('drop', async e=>{
+  e.preventDefault();
+  const dt = e.dataTransfer;
+  if (!dt) return;
+  if (dt.files && dt.files.length){
+    const imgs = Array.from(dt.files).filter(f=>/^image\//.test(f.type));
+    const dropInPreview = e.composedPath().includes(canvasWrap);
+    addFiles(imgs, dropInPreview);
+    return;
+  }
+  const url = dt.getData('text/uri-list') || dt.getData('text/plain');
+  if(url){
+    try{
+      const res = await fetch(url, {mode:'cors'});
+      const blob = await res.blob();
+      if(!/^image\//.test(blob.type)) throw new Error('Not image');
+      const f = new File([blob], 'remote.jpg', {type: blob.type});
+      const dropInPreview = e.composedPath().includes(canvasWrap);
+      addFiles([f], dropInPreview);
+    }catch(err){
+      showToast('跨域受限，无法直接获取；请先另存图片到本地后再拖入。');
+    }
+  }
+});
+
+// 缩略图容器整体禁投放
+thumbs.addEventListener('dragover', (e)=>{ e.preventDefault(); e.dataTransfer.dropEffect='none'; });
+thumbs.addEventListener('drop', (e)=>{ e.preventDefault(); });
+
+// 键盘：Ctrl+Enter = Save all
+document.addEventListener('keydown', (e)=>{
+  if((e.ctrlKey || e.metaKey) && e.key === 'Enter'){
+    exportAll();
+  }
+});
+
+// 选择 Base 文件夹并持久化
+el('pickFolder').addEventListener('click', async ()=>{
+  if (!('showDirectoryPicker' in window)){
+    showToast('当前环境不支持文件夹写入（需 https 或 localhost）');
+    return;
+  }
+  try{
+    const h = await window.showDirectoryPicker({id:'tmpicup-base'});
+    // 请求一次读写授权
+    const p = await h.requestPermission({mode:'readwrite'});
+    if(p !== 'granted'){ showToast('未授权写入'); return; }
+    dirHandle = h;
+    await persistAndShow(h);
+    showToast('已选择 Base 文件夹');
+  }catch(e){
+    if(e.name!=='AbortError') showToast('选择文件夹失败');
+  }
+});
+
+// 尝试恢复上次 Base 目录
+restoreDirHandle();
+
+// 保存用户偏好：比例/尺寸
+sizeInput.addEventListener('change', savePrefs);
+ratioSel.addEventListener('change', savePrefs);
 </script>
 </body>
 </html>
