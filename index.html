@@ -104,7 +104,7 @@
 <script src="https://cdn.jsdelivr.net/npm/cropperjs@1.5.13/dist/cropper.min.js"></script>
 <script>
 // ------- State -------
-let files = [];           // { file, url, key }
+let files = [];           // { file, url, key, cropState? }
 let activeIndex = -1;
 let cropper = null;
 let dirHandle = null;     // File System Access API directory handle
@@ -148,70 +148,6 @@ function savePrefs(){
 }
 loadPrefs();
 
-// ------- IndexedDB (store dirHandle) -------
-const DB_NAME='tmpicup-db', STORE='kv';
-function openDB(){
-  return new Promise((resolve,reject)=>{
-    const req = indexedDB.open(DB_NAME,1);
-    req.onupgradeneeded = e=>{
-      e.target.result.createObjectStore(STORE);
-    };
-    req.onsuccess = ()=> resolve(req.result);
-    req.onerror = ()=> reject(req.error);
-  });
-}
-async function idbSet(key, val){
-  const db = await openDB();
-  return new Promise((res,rej)=>{
-    const tx = db.transaction(STORE,'readwrite');
-    tx.objectStore(STORE).put(val, key);
-    tx.oncomplete = ()=> res();
-    tx.onerror = ()=> rej(tx.error);
-  });
-}
-async function idbGet(key){
-  const db = await openDB();
-  return new Promise((res,rej)=>{
-    const tx = db.transaction(STORE,'readonly');
-    const req = tx.objectStore(STORE).get(key);
-    req.onsuccess = ()=> res(req.result);
-    req.onerror = ()=> rej(req.error);
-  });
-}
-
-const DIR_KEY='baseDirHandle';
-
-async function restoreDirHandle(){
-  if(!('showDirectoryPicker' in window)) return;
-  try{
-    const h = await idbGet(DIR_KEY);
-    if(!h) return;
-    // Check permission
-    let perm = await h.queryPermission({mode:'readwrite'});
-    if(perm === 'prompt'){
-      // avoid disruptive prompt; do not request automatically
-      folderPath.textContent = `${h.name}（未授权，点击「选择 Base 文件夹」重新授权）`;
-      dirHandle = h;
-      return;
-    }
-    if(perm === 'granted'){
-      dirHandle = h;
-      folderPath.textContent = `${h.name}`;
-      return;
-    }
-  }catch(e){
-    console.warn('restore dir handle failed', e);
-  }
-}
-
-async function persistAndShow(handle){
-  try{
-    await navigator.storage?.persist?.();
-  }catch{}
-  await idbSet(DIR_KEY, handle);
-  folderPath.textContent = handle.name || '已选择';
-}
-
 // ------- UI helpers -------
 function showToast(msg='已保存'){
   toast.textContent = msg;
@@ -235,33 +171,11 @@ function renderThumbs(){
     d.appendChild(close);
     d.addEventListener('click', ()=> setActive(i));
     d.addEventListener('contextmenu', (e)=>{ e.preventDefault(); removeAt(i); });
+    // 禁止在缩略图区域投放，避免误拖重复添加
     d.addEventListener('dragover', (e)=>{ e.preventDefault(); e.dataTransfer.dropEffect='none'; });
     d.addEventListener('drop', (e)=>{ e.preventDefault(); });
     thumbs.appendChild(d);
   });
-}
-
-function setActive(i){
-  activeIndex = i;
-  renderThumbs();
-  if (cropper) { cropper.destroy(); cropper = null; }
-  const item = files[i];
-  if(!item) return;
-  previewImg.src = item.url;
-  previewImg.onload = ()=>{
-    cropper = new Cropper(previewImg, {
-      aspectRatio: parseFloat(ratioSel.value),
-      viewMode: 1,
-      autoCropArea: 1,
-      background: false
-    });
-  };
-}
-
-function parseSize(v){
-  const m = v.trim().toLowerCase().match(/^(\d+)\s*x\s*(\d+)$/);
-  if (!m) return null;
-  return {w: parseInt(m[1]), h: parseInt(m[2])};
 }
 
 function keyOfFile(f){
@@ -275,7 +189,7 @@ function addFiles(blobs, makeActiveLatest=false){
     if(addedKeys.has(key)) continue;
     if(!/^image\//.test(f.type)) continue;
     const url = URL.createObjectURL(f);
-    files.push({file:f, url, key});
+    files.push({file:f, url, key, cropState:null});
     addedKeys.add(key);
     added.push(files.length-1);
   }
@@ -302,6 +216,74 @@ function removeAt(i){
     previewImg.removeAttribute('src');
     activeIndex = -1;
   }
+}
+
+// 保存当前活动图片的裁剪状态
+function saveCurrentCropState(){
+  if (activeIndex<0 || !cropper) return;
+  const item = files[activeIndex];
+  try{
+    item.cropState = {
+      data: cropper.getData(true),
+      cropBox: cropper.getCropBoxData(),
+      canvas: cropper.getCanvasData()
+    };
+  }catch(e){ /* ignore */}
+}
+
+// 设置活动图片，并在就绪后恢复裁剪状态（如有）
+// 返回 Promise，等裁剪器 ready 且状态恢复完成再 resolve
+function setActive(i){
+  activeIndex = i;
+  renderThumbs();
+  if (cropper) { 
+    // 离开前保存旧的裁剪状态
+    saveCurrentCropState();
+    cropper.destroy(); 
+    cropper = null; 
+  }
+  const item = files[i];
+  if(!item) return Promise.resolve();
+  previewImg.src = item.url;
+  return new Promise((resolve)=>{
+    previewImg.onload = ()=>{
+      cropper = new Cropper(previewImg, {
+        aspectRatio: parseFloat(ratioSel.value),
+        viewMode: 1,
+        autoCropArea: 1,
+        background: false,
+        ready(){
+          // ready 后恢复之前保存的裁剪状态
+          if(item.cropState){
+            try{
+              if(item.cropState.canvas) cropper.setCanvasData(item.cropState.canvas);
+              if(item.cropState.cropBox) cropper.setCropBoxData(item.cropState.cropBox);
+              if(item.cropState.data)     cropper.setData(item.cropState.data);
+            }catch(e){ /* ignore */}
+          }
+          // 绑定事件：任何调整都实时保存
+          bindCropperEvents();
+          resolve();
+        }
+      });
+    };
+  });
+}
+
+function bindCropperEvents(){
+  if(!cropper) return;
+  const save = ()=> saveCurrentCropState();
+  cropper.off('cropend'); cropper.off('zoom'); cropper.off('move'); cropper.off('crop');
+  cropper.on('cropend', save);
+  cropper.on('zoom', save);
+  cropper.on('move', save);
+  cropper.on('crop', save);
+}
+
+function parseSize(v){
+  const m = v.trim().toLowerCase().match(/^(\d+)\s*x\s*(\d+)$/);
+  if (!m) return null;
+  return {w: parseInt(m[1]), h: parseInt(m[2])};
 }
 
 // ------- Export helpers -------
@@ -335,8 +317,12 @@ async function exportCurrent(toFS=true){
   const suffix = suffixInput.value || '_auto';
   const name = `${spu}-${String(idx).padStart(2,'0')}${suffix}.jpg`;
 
+  // 导出前确保保存最新裁剪状态
+  saveCurrentCropState();
+
   const blob = await canvasToJpegBlob(cropper, size, q);
 
+  // 优先写入文件夹（需 https/localhost）
   if(toFS && dirHandle?.kind === 'directory'){
     try{
       const sub = await ensureSubdir(dirHandle, spu);
@@ -348,6 +334,7 @@ async function exportCurrent(toFS=true){
       console.warn('FS save failed, fallback to download', e);
     }
   }
+  // 回退：浏览器下载
   const a = document.createElement('a');
   a.download = name;
   a.href = URL.createObjectURL(blob);
@@ -362,12 +349,22 @@ async function exportAll(){
   if (!size){ showToast('输出尺寸格式不正确'); return; }
   savePrefs();
 
+  // 记录当前活动索引
+  const originalActive = activeIndex;
+
   for (let i=0;i<files.length;i++){
-    setActive(i);
-    await new Promise(r=> setTimeout(r, 250));
-    await exportCurrent(true);
-    await new Promise(r=> setTimeout(r, 80));
+    if (i === activeIndex && cropper){
+      // 当前这张：不要调用 setActive，直接按当前裁剪状态导出
+      await exportCurrent(true);
+    } else {
+      // 其它图片：切换到该图，并恢复其最后一次裁剪状态，再导出
+      await setActive(i);
+      await exportCurrent(true);
+    }
+    // 小延时，避免阻塞 UI
+    await new Promise(r=> setTimeout(r, 60));
   }
+
   showToast('全部保存完成 ✅');
   clearAll();
 }
@@ -386,8 +383,19 @@ fileInput.addEventListener('change', e=>{
 
 ratioSel.addEventListener('change', ()=>{
   if (cropper){
+    // 切换比例：先保存当前裁剪状态，再改变比例，再尝试恢复
+    saveCurrentCropState();
     cropper.setAspectRatio(parseFloat(ratioSel.value));
+    // 恢复时可能会被约束到新的比例，尽量接近原位置
+    const st = files[activeIndex]?.cropState;
+    if (st){
+      try{
+        cropper.setCanvasData(st.canvas);
+        cropper.setData(st.data);
+      }catch(e){/* ignore */}
+    }
   }
+  // 尺寸联动：切换比例时，若用户未自定义过，回填默认
   if(ratioSel.value==='0.75' && !localStorage.getItem(LAST_SIZE_075)){
     sizeInput.value = '1500x2000';
   }else if(ratioSel.value==='1' && !localStorage.getItem(LAST_SIZE_1)){
@@ -447,27 +455,21 @@ document.addEventListener('keydown', (e)=>{
   }
 });
 
-// 选择 Base 文件夹并持久化
+// 选择 Base 文件夹（File System Access API）
+// 这里保留按钮但不做 IndexedDB 持久化，专注本次 bug 修复；需要可再加回
 el('pickFolder').addEventListener('click', async ()=>{
   if (!('showDirectoryPicker' in window)){
     showToast('当前环境不支持文件夹写入（需 https 或 localhost）');
     return;
   }
   try{
-    const h = await window.showDirectoryPicker({id:'tmpicup-base'});
-    // 请求一次读写授权
-    const p = await h.requestPermission({mode:'readwrite'});
-    if(p !== 'granted'){ showToast('未授权写入'); return; }
-    dirHandle = h;
-    await persistAndShow(h);
+    dirHandle = await window.showDirectoryPicker({id:'tmpicup-base'});
+    folderPath.textContent = '已选择';
     showToast('已选择 Base 文件夹');
   }catch(e){
     if(e.name!=='AbortError') showToast('选择文件夹失败');
   }
 });
-
-// 尝试恢复上次 Base 目录
-restoreDirHandle();
 
 // 保存用户偏好：比例/尺寸
 sizeInput.addEventListener('change', savePrefs);
