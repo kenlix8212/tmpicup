@@ -228,20 +228,20 @@ function saveCurrentCropState(){
       cropBox: cropper.getCropBoxData(),
       canvas: cropper.getCanvasData()
     };
-  }catch(e){ /* ignore */}
+  }catch(e){ /* ignore */ }
 }
 
 // 设置活动图片，并在就绪后恢复裁剪状态（如有）
 // 返回 Promise，等裁剪器 ready 且状态恢复完成再 resolve
 function setActive(i){
-  activeIndex = i;
-  renderThumbs();
-  if (cropper) { 
+  if (cropper) {
     // 离开前保存旧的裁剪状态
     saveCurrentCropState();
-    cropper.destroy(); 
-    cropper = null; 
+    cropper.destroy();
+    cropper = null;
   }
+  activeIndex = i;
+  renderThumbs();
   const item = files[i];
   if(!item) return Promise.resolve();
   previewImg.src = item.url;
@@ -259,7 +259,7 @@ function setActive(i){
               if(item.cropState.canvas) cropper.setCanvasData(item.cropState.canvas);
               if(item.cropState.cropBox) cropper.setCropBoxData(item.cropState.cropBox);
               if(item.cropState.data)     cropper.setData(item.cropState.data);
-            }catch(e){ /* ignore */}
+            }catch(e){ /* ignore */ }
           }
           // 绑定事件：任何调整都实时保存
           bindCropperEvents();
@@ -281,7 +281,7 @@ function bindCropperEvents(){
 }
 
 function parseSize(v){
-  const m = v.trim().toLowerCase().match(/^(\d+)\s*x\s*(\d+)$/);
+  const m = v.trim().toLowerCase().match(/^(\\d+)\\s*x\\s*(\\d+)$/);
   if (!m) return null;
   return {w: parseInt(m[1]), h: parseInt(m[2])};
 }
@@ -311,7 +311,7 @@ async function exportCurrent(toFS=true){
   const size = parseSize(sizeInput.value);
   if (!size) { showToast('输出尺寸格式不正确'); return; }
   const q = Math.max(0.5, Math.min(1, parseFloat(qualityInput.value)||0.9));
-  const spu = (spuInput.value.trim() || 'spu').replace(/[^\w\-]/g,'');
+  const spu = (spuInput.value.trim() || 'spu').replace(/[^\\w\\-]/g,'');
   const baseIndex = parseInt(startIndexInput.value)||1;
   const idx = baseIndex + activeIndex;
   const suffix = suffixInput.value || '_auto';
