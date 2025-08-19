@@ -16,7 +16,7 @@
     .thumb { position:relative; border: 2px solid transparent; border-radius: 6px; padding: 2px; cursor: pointer; background:#f9fafb; }
     .thumb.active { border-color: #3b82f6; background:#eff6ff; }
     .thumb img { width: 100%; display: block; border-radius: 4px; }
-    .thumb .close {position:absolute; right:4px; top:4px; width:20px; height:20px; line-height:18px; text-align:center; border-radius:10px; background:#111827; color:#fff; font-weight:700; font-size:1[...]
+    .thumb .close {position:absolute; right:4px; top:4px; width:20px; height:20px; line-height:18px; text-align:center; border-radius:10px; background:#111827; color:#fff; font-weight:700; font-size:12px; display:none; cursor:pointer;}
     .thumb:hover .close{display:block;}
     .controls label { display:block; font-size: 13px; margin-top: 8px; }
     .controls input[type="text"], .controls input[type="number"], .controls select { width: 100%; padding: 6px 8px; border-radius: 6px; border: 1px solid #d1d5db; }
@@ -30,7 +30,7 @@
     .bar { display:flex; align-items:center; gap:8px; flex-wrap: wrap; }
     .hint { font-size: 12px; color:#cbd5e1; }
     .toolbar{display:flex; gap:8px; flex-wrap:wrap; margin-top:8px}
-    .toast{position:fixed; left:50%; transform:translateX(-50%); bottom:14px; background:#111827; color:#fff; padding:10px 14px; border-radius:10px; font-size:13px; opacity:0; transition:opacity .2s, [...]
+    .toast{position:fixed; left:50%; transform:translateX(-50%); bottom:14px; background:#111827; color:#fff; padding:10px 14px; border-radius:10px; font-size:13px; opacity:0; transition:opacity .2s, transform .2s;}
     .toast.show{opacity:1; transform:translate(-50%,-6px)}
     .muted{color:#6b7280; font-size:12px}
     .drop-block{user-select:none}
@@ -65,7 +65,8 @@
           </select>
         </label>
         <label>输出尺寸（宽×高）
-          <input id="size" type="text" value="1500x2000" placeholder="如 1500x2000 或 1200x1200">
+          <!-- 设为只读：不可编辑，只随比例变化 -->
+          <input id="size" type="text" value="1500x2000" readonly>
         </label>
       </div>
       <div class="row">
@@ -127,24 +128,19 @@ const folderPath = el('folderPath');
 
 // ------- Persist last settings -------
 const LAST_RATIO_KEY = 'tmpicup:lastRatio';
-const LAST_SIZE_1 = 'tmpicup:size:1';
-const LAST_SIZE_075 = 'tmpicup:size:0.75';
 
 function loadPrefs(){
   const lastRatio = localStorage.getItem(LAST_RATIO_KEY);
   if(lastRatio){
     ratioSel.value = lastRatio;
-    const size = localStorage.getItem(lastRatio==='1'?LAST_SIZE_1:LAST_SIZE_075);
-    if(size) sizeInput.value = size;
   }else{
     ratioSel.value = '0.75';
-    sizeInput.value = '1500x2000';
   }
+  // 输出尺寸固定随比例变化，不允许编辑
+  sizeInput.value = ratioSel.value === '1' ? '1200x1200' : '1500x2000';
 }
 function savePrefs(){
   localStorage.setItem(LAST_RATIO_KEY, ratioSel.value);
-  const key = ratioSel.value==='1'?LAST_SIZE_1:LAST_SIZE_075;
-  localStorage.setItem(key, sizeInput.value.trim());
 }
 loadPrefs();
 
@@ -273,17 +269,45 @@ function setActive(i){
 function bindCropperEvents(){
   if(!cropper) return;
   const save = ()=> saveCurrentCropState();
-  cropper.off('cropend'); cropper.off('zoom'); cropper.off('move'); cropper.off('crop');
-  cropper.on('cropend', save);
-  cropper.on('zoom', save);
-  cropper.on('move', save);
-  cropper.on('crop', save); // 每次裁剪都保存（核心修复！）
+  // 尝试移除已有绑定（若实现不支持 off 不会报错)
+  try{
+    cropper.off && cropper.off('cropend');
+    cropper.off && cropper.off('zoom');
+    cropper.off && cropper.off('move');
+    cropper.off && cropper.off('crop');
+  }catch(e){}
+  // 绑定事件：每次裁剪/移动/缩放都保存状态
+  try{
+    cropper.on && cropper.on('cropend', save);
+    cropper.on && cropper.on('zoom', save);
+    cropper.on && cropper.on('move', save);
+    cropper.on && cropper.on('crop', save);
+  }catch(e){}
 }
 
 function parseSize(v){
-  const m = v.trim().toLowerCase().match(/^(\d+)\s*x\s*(\d+)$/);
-  if (!m) return null;
-  return {w: parseInt(m[1]), h: parseInt(m[2])};
+  // 容错解析：把常见分隔符替换成小写 x，去掉空白与全角字符
+  try{
+    if(!v) v = '';
+    v = String(v).trim();
+    // 把部分全角符号先替换成半角方便处理
+    v = v.replace(/[\uFF1A\uFF0C\u00A0]/g, ':');
+    // 把冒号、逗号、乘号等统一为 x
+    v = v.replace(/[:：,，×\u00D7]/g, 'x');
+    v = v.replace(/\s+/g, '');
+    v = v.replace(/X/g, 'x');
+    const m = v.match(/^(\d+)\s*x\s*(\d+)$/);
+    if (m) return {w: parseInt(m[1],10), h: parseInt(m[2],10)};
+  }catch(e){
+    console.warn('parseSize normalization error', e);
+  }
+
+  // 如果仍解析失败：使用基于比例的默认回退值（确保不会中断保存流程）
+  const fallback = (ratioSel && ratioSel.value === '1') ? {w:1200, h:1200} : {w:1500, h:2000};
+  console.warn('parseSize failed for input:', v, ' -> fallback to', fallback);
+  // 把回退值写回输入框（避免后续再次失败）
+  try{ sizeInput.value = `${fallback.w}x${fallback.h}`; }catch(e){}
+  return fallback;
 }
 
 // ------- Export helpers -------
@@ -384,29 +408,27 @@ fileInput.addEventListener('change', e=>{
 });
 
 ratioSel.addEventListener('change', ()=>{
+  // 切换比例时自动设置输出尺寸（不可编辑）并保存偏好
+  if (ratioSel.value==='0.75'){
+    sizeInput.value = '1500x2000';
+  }else{
+    sizeInput.value = '1200x1200';
+  }
+
   if (cropper){
     // 切换比例：先保存当前裁剪状态，再改变比例，再尝试恢复
     saveCurrentCropState();
     cropper.setAspectRatio(parseFloat(ratioSel.value));
-    // 恢复时可能会被约束到新的比例，尽量接近原位置
     const st = files[activeIndex]?.cropState;
     if (st){
       try{
         cropper.setCanvasData(st.canvas);
         cropper.setData(st.data);
-      }catch(e){/* ignore */}
+      }catch(e){/* ignore */ }
     }
   }
-  // 尺寸联动：切换比例时，若用户未自定义过，回填默认
-  if(ratioSel.value==='0.75' && !localStorage.getItem(LAST_SIZE_075)){
-    sizeInput.value = '1500x2000';
-  }else if(ratioSel.value==='1' && !localStorage.getItem(LAST_SIZE_1)){
-    sizeInput.value = '1200x1200';
-  }else{
-    const key = ratioSel.value==='1'?LAST_SIZE_1:LAST_SIZE_075;
-    const saved = localStorage.getItem(key);
-    if(saved) sizeInput.value = saved;
-  }
+
+  savePrefs();
 });
 
 el('exportOne').addEventListener('click', ()=> exportCurrent(true).then(()=>showToast('已保存当前')));
@@ -473,8 +495,7 @@ el('pickFolder').addEventListener('click', async ()=>{
   }
 });
 
-// 保存用户偏好：比例/尺寸
-sizeInput.addEventListener('change', savePrefs);
+// 保存用户偏好：只保存比例
 ratioSel.addEventListener('change', savePrefs);
 </script>
 </body>
