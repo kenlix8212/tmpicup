@@ -245,7 +245,7 @@ function setActive(i){
     previewImg.onload = ()=>{
       cropper = new Cropper(previewImg, {
         aspectRatio: parseFloat(ratioSel.value),
-        viewMode: 1,
+  viewMode: 0,
         autoCropArea: 1,
         background: false,
         ready(){
@@ -312,8 +312,21 @@ function parseSize(v){
 
 // ------- Export helpers -------
 async function canvasToJpegBlob(cropper, size, quality){
-  const canvas = cropper.getCroppedCanvas({ width:size.w, height:size.h });
-  return await new Promise(res=> canvas.toBlob(res, 'image/jpeg', quality));
+  // Get the cropped canvas from cropper. When the crop box extends beyond the
+  // source image this canvas may contain transparent areas. To ensure exported
+  // JPEG has a white background (not transparent), draw the cropped result
+  // onto a new same-size canvas with white fill first.
+  const cropped = cropper.getCroppedCanvas({ width: size.w, height: size.h });
+  const out = document.createElement('canvas');
+  out.width = size.w;
+  out.height = size.h;
+  const ctx = out.getContext('2d');
+  // Fill white background
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, out.width, out.height);
+  // Draw the cropped image (may include transparent areas) onto the white canvas
+  ctx.drawImage(cropped, 0, 0);
+  return await new Promise(res => out.toBlob(res, 'image/jpeg', quality));
 }
 
 async function ensureSubdir(handle, subdir){
