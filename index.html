@@ -71,11 +71,28 @@
       </div>
       <div class="row">
         <label>JPEG 质量（0.5~1）
-          <input id="quality" type="number" value="0.9" min="0.5" max="1" step="0.05">
+            <div style="display:flex; gap:6px; align-items:center">
+              <input id="quality" type="number" value="0.9" min="0.5" max="1" step="0.05" style="flex:1">
+              <button id="advToggle" title="高级设置" class="btn" style="padding:6px 8px; font-size:12px">⚙</button>
+            </div>
         </label>
         <label>文件名后缀
           <input id="suffix" type="text" value="_auto" placeholder="如 _1500x2000 或 _auto">
         </label>
+      </div>
+
+      <!-- Advanced settings (collapsed by default) -->
+      <div id="advancedPanel" style="display:none; margin-top:8px; padding:8px; border-radius:6px; background:#f8fafc; border:1px solid #e6eef6">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px">
+          <label>最大文件大小（MB）
+            <input id="maxSizeMb" type="number" min="0.1" step="0.1" value="1.9">
+          </label>
+          <label style="align-self:end"><input id="autoAdjustQuality" type="checkbox" checked> 自动调整质量</label>
+        </div>
+        <div style="display:flex; gap:8px; margin-top:8px; align-items:center">
+          <label style="display:flex; gap:8px; align-items:center"><input id="allowDownscale" type="checkbox"> 允许按比例缩小分辨率（默认关闭）</label>
+          <button id="resetDefaults" class="btn secondary" style="margin-left:auto">恢复默认</button>
+        </div>
       </div>
 
       <div class="toolbar">
@@ -125,6 +142,12 @@ const suffixInput = el('suffix');
 const toast = el('toast');
 const canvasWrap = el('canvasWrap');
 const folderPath = el('folderPath');
+const advToggle = () => el('advToggle');
+const advancedPanel = () => el('advancedPanel');
+const maxSizeMbInput = () => el('maxSizeMb');
+const autoAdjustQualityInput = () => el('autoAdjustQuality');
+const allowDownscaleInput = () => el('allowDownscale');
+const resetDefaultsBtn = () => el('resetDefaults');
 
 // ------- Persist last settings -------
 const LAST_RATIO_KEY = 'tmpicup:lastRatio';
@@ -143,6 +166,104 @@ function savePrefs(){
   localStorage.setItem(LAST_RATIO_KEY, ratioSel.value);
 }
 loadPrefs();
+
+// ------- Advanced settings persistence & defaults -------
+const ADV_KEY = 'tmpicup:advanced';
+const ADV_DEFAULTS = { maxSizeMb: 1.9, autoAdjustQuality: true, allowDownscale: false, modified: false };
+function loadAdvanced(){
+  try{
+    const raw = localStorage.getItem(ADV_KEY);
+    if(!raw) return {...ADV_DEFAULTS};
+    const v = JSON.parse(raw);
+    return Object.assign({}, ADV_DEFAULTS, v);
+  }catch(e){ return {...ADV_DEFAULTS}; }
+}
+function saveAdvanced(opts){
+  localStorage.setItem(ADV_KEY, JSON.stringify(opts));
+}
+function resetAdvanced(){ saveAdvanced({...ADV_DEFAULTS}); renderAdvanced(); }
+function renderAdvanced(){
+  const a = loadAdvanced();
+  try{ maxSizeMbInput().value = a.maxSizeMb; }catch(e){}
+  try{ autoAdjustQualityInput().checked = !!a.autoAdjustQuality; }catch(e){}
+  try{ allowDownscaleInput().checked = !!a.allowDownscale; }catch(e){}
+}
+renderAdvanced();
+
+// Toggle panel
+el('advToggle').addEventListener('click', ()=>{
+  const p = el('advancedPanel');
+  if(p.style.display === 'none') p.style.display = 'block'; else p.style.display = 'none';
+});
+resetDefaultsBtn().addEventListener('click', ()=>{ resetAdvanced(); showToast('已恢复默认'); });
+maxSizeMbInput().addEventListener('change', ()=>{ const a = loadAdvanced(); a.maxSizeMb = parseFloat(maxSizeMbInput().value)||1.9; a.modified = true; saveAdvanced(a); });
+autoAdjustQualityInput().addEventListener('change', ()=>{ const a = loadAdvanced(); a.autoAdjustQuality = !!autoAdjustQualityInput().checked; a.modified = true; saveAdvanced(a); });
+allowDownscaleInput().addEventListener('change', ()=>{ const a = loadAdvanced(); a.allowDownscale = !!allowDownscaleInput().checked; a.modified = true; saveAdvanced(a); });
+
+// Helper: generate blob with quality limit (binary search), respecting cannot-downscale rule
+async function generateBlobWithLimit(cropperInstance, size, startQuality, opts){
+  // opts: { maxBytes, minQuality=0.5, maxAttempts=6, allowDownscale }
+  const maxBytes = opts.maxBytes || 1900000;
+  const minQuality = typeof opts.minQuality === 'number' ? opts.minQuality : 0.5;
+  const maxAttempts = opts.maxAttempts || 6;
+
+  // first try at startQuality
+  let qHigh = Math.min(1, startQuality);
+  let qLow = minQuality;
+
+  const blobAt = async (q, s) => {
+    // when resizing required, we need to draw cropped canvas at new size
+    if(s && (s.w !== size.w || s.h !== size.h)){
+      // get cropped canvas at original size and then scale into new canvas
+      const tmp = cropperInstance.getCroppedCanvas({ width: size.w, height: size.h });
+      const out = document.createElement('canvas'); out.width = s.w; out.height = s.h;
+      const ctx = out.getContext('2d'); ctx.fillStyle = '#ffffff'; ctx.fillRect(0,0,s.w,s.h);
+      ctx.drawImage(tmp, 0, 0, s.w, s.h);
+      return await new Promise(r=> out.toBlob(r, 'image/jpeg', q));
+    }
+    // normal path
+    const out = cropperInstance.getCroppedCanvas({ width: size.w, height: size.h });
+    const final = document.createElement('canvas'); final.width = size.w; final.height = size.h;
+    const ctx = final.getContext('2d'); ctx.fillStyle = '#ffffff'; ctx.fillRect(0,0,final.width, final.height);
+    ctx.drawImage(out,0,0);
+    return await new Promise(r=> final.toBlob(r, 'image/jpeg', q));
+  };
+
+  // quick initial try
+  let blob = await blobAt(qHigh);
+  if(blob && blob.size <= maxBytes) return { blob, usedQuality: qHigh, usedSize: {w: size.w, h: size.h}, ok:true };
+
+  // if auto quality disabled, return initial blob
+  if(!opts.autoQuality) return { blob, usedQuality: qHigh, usedSize: {w:size.w,h:size.h}, ok: blob.size<=maxBytes };
+
+  // binary search quality
+  let lastGood = null;
+  for(let i=0;i<maxAttempts;i++){
+    const mid = Math.max(minQuality, (qLow + qHigh)/2);
+    const b = await blobAt(mid);
+    if(b && b.size <= maxBytes){ lastGood = {blob:b, usedQuality: mid}; qLow = mid; }
+    else { qHigh = mid; }
+    // stop when qHigh - qLow small
+    if((qHigh - qLow) < 0.02) break;
+  }
+  if(lastGood) return { blob:lastGood.blob, usedQuality:lastGood.usedQuality, usedSize:{w:size.w,h:size.h}, ok:true };
+
+  // if allowDownscale is true and caller allows, attempt a single downscale step (but caller requested 'cannot shrink' so we won't shrink by default)
+  if(opts.allowDownscale){
+    // compute rough scale needed
+    const estimatedScale = Math.sqrt(maxBytes / (blob ? blob.size : (maxBytes*4)));
+    const scale = Math.max(0.6, Math.min(1, estimatedScale));
+    const newSize = { w: Math.round(size.w * scale), h: Math.round(size.h * scale) };
+    // ensure not below UI size if caller forbids shrinking; caller controls allowDownscale
+    const b2 = await blobAt(Math.max(minQuality, qLow), newSize);
+    if(b2 && b2.size <= maxBytes) return { blob:b2, usedQuality: Math.max(minQuality,qLow), usedSize:newSize, ok:true };
+    // return best we have
+    return { blob: b2 || blob, usedQuality: Math.max(minQuality,qLow), usedSize:newSize, ok: (b2? b2.size<=maxBytes:false) };
+  }
+
+  // fallback: return last generated blob (likely larger than max)
+  return { blob, usedQuality: qLow, usedSize: {w:size.w,h:size.h}, ok:false };
+}
 
 // ------- UI helpers -------
 function showToast(msg='已保存'){
@@ -357,7 +478,21 @@ async function exportCurrent(toFS=true){
   // 导出前确保保存最新裁剪状态
   saveCurrentCropState();
 
-  const blob = await canvasToJpegBlob(cropper, size, q);
+  // load advanced settings
+  const adv = loadAdvanced();
+  const maxBytes = Math.max(1024, Math.floor((parseFloat(adv.maxSizeMb)||1.9) * 1024 * 1024));
+  // enforce cannot shrink: do not allow downscale unless adv.allowDownscale true
+  const genRes = await generateBlobWithLimit(cropper, size, q, { maxBytes, autoQuality: !!adv.autoAdjustQuality, allowDownscale: !!adv.allowDownscale });
+  const blob = genRes.blob;
+
+  // If not ok and this is single export, notify user to use smaller source
+  if(!genRes.ok){
+    if(toFS){
+      // single export path: inform user
+      showToast('已达到最低质量，文件仍超限，请尝试更小的图片。');
+    }
+    // For batch exports, caller will handle skipping logic (we return blob anyway)
+  }
 
   // 优先写入文件夹（需 https/localhost）
   if(toFS && dirHandle?.kind === 'directory'){
@@ -365,7 +500,7 @@ async function exportCurrent(toFS=true){
       const sub = await ensureSubdir(dirHandle, spu);
       if(sub){
         await saveBlobToFS(sub, name, blob);
-        return { ok:true, filename:name, path:`${spu}/${name}`, method:'fs' };
+        return { ok: genRes.ok===undefined ? true : genRes.ok, filename:name, path:`${spu}/${name}`, method:'fs' };
       }
     }catch(e){
       console.warn('FS save failed, fallback to download', e);
@@ -377,7 +512,7 @@ async function exportCurrent(toFS=true){
   a.href = URL.createObjectURL(blob);
   a.click();
   URL.revokeObjectURL(a.href);
-  return { ok:true, filename:name, method:'download' };
+  return { ok: genRes.ok===undefined ? true : genRes.ok, filename:name, method:'download' };
 }
 
 async function exportAll(){
@@ -394,17 +529,23 @@ async function exportAll(){
   for (let i=0;i<files.length;i++){
     if (i === activeIndex && cropper){
       // 当前这张：不要调用 setActive，直接按当前裁剪状态导出
-      await exportCurrent(true);
+      const res = await exportCurrent(true);
+      if(res && res.ok===false) skipped.push(i);
     } else {
       // 其它图片：切换到该图，并恢复其最后一次裁剪状态，再导出
       await setActive(i);
-      await exportCurrent(true);
+      const res = await exportCurrent(true);
+      if(res && res.ok===false) skipped.push(i);
     }
     // 小延时，避免阻塞 UI
     await new Promise(r=> setTimeout(r, 60));
   }
 
-  showToast('全部保存完成 ✅');
+  if(skipped.length){
+    showToast(`部分图片超出限制被跳过：${skipped.length} 张`);
+  } else {
+    showToast('全部保存完成 ✅');
+  }
   clearAll();
 }
 
