@@ -48,6 +48,7 @@
     <div class="controls">
       <label>选择/拖入图片
         <input id="fileInput" type="file" accept="image/*" multiple>
+        <div class="muted" style="margin-top:6px; font-size:12px">或按 <strong>Ctrl/Cmd</strong>+<strong>V</strong> 粘贴图片</div>
       </label>
       <div class="row">
         <label>SPU（用于命名/子目录）
@@ -90,7 +91,7 @@
     </div>
   </section>
   <section class="panel">
-    <div id="canvasWrap" class="drop-target" title="可直接把图片从其它标签页拖到此区域">
+    <div id="canvasWrap" class="drop-target" title="可直接把图片从其它标签页拖到此区域" tabindex="0" role="button" aria-label="可点击并按 Ctrl/Cmd+V 粘贴图片">
       <img id="previewImg" alt="预览将显示在这里">
     </div>
     <div class="muted" style="margin-top:8px">右键预览可删除当前；右键缩略图可删除；缩略图右上角“×”可删除。</div>
@@ -439,6 +440,64 @@ el('clear').addEventListener('click', clearAll);
 previewImg.addEventListener('contextmenu', (e)=>{
   e.preventDefault();
   if(activeIndex>=0) removeAt(activeIndex);
+});
+
+// 粘贴支持：从剪贴板读取图片并复用上传逻辑（优先使用同步 clipboardData，回退到 navigator.clipboard.read）
+document.addEventListener('paste', async (e)=>{
+  const clipboard = e.clipboardData || window.clipboardData;
+  if (!clipboard) return;
+
+  const filesFromClipboard = [];
+  // 优先处理 clipboardData 的 items（同步）
+  if(clipboard.items && clipboard.items.length){
+    for(const it of clipboard.items){
+      try{
+        if(it.kind === 'file' && it.type && it.type.startsWith('image/')){
+          const file = it.getAsFile ? it.getAsFile() : it.getAsBlob && it.getAsBlob();
+          if(file) filesFromClipboard.push(file);
+        }
+      }catch(_){/* ignore malformed items */}
+    }
+  }
+
+  // 回退：尝试 navigator.clipboard.read（需权限、HTTPS）
+  if(filesFromClipboard.length === 0 && navigator.clipboard && navigator.clipboard.read){
+    try{
+      const clipboardItems = await navigator.clipboard.read();
+      for(const clipIt of clipboardItems){
+        for(const type of clipIt.types){
+          if(type.startsWith('image/')){
+            const blob = await clipIt.getType(type);
+            const file = new File([blob], 'clipboard.' + (type.split('/')[1] || 'png'), {type: blob.type});
+            filesFromClipboard.push(file);
+          }
+        }
+      }
+    }catch(err){ /* permissions or unsupported - ignore */ }
+  }
+
+  // 额外尝试：粘贴 URL（文本）指向图片
+  if(filesFromClipboard.length === 0){
+    try{
+      const text = clipboard.getData && clipboard.getData('text/plain');
+      if(text && /^https?:\/\//.test(text)){
+        const res = await fetch(text, {mode:'cors'});
+        const blob = await res.blob();
+        if(/^image\//.test(blob.type)){
+          const f = new File([blob], 'pasted-remote.jpg', {type: blob.type});
+          filesFromClipboard.push(f);
+        }
+      }
+    }catch(err){ /* ignore cross-origin or fetch errors */ }
+  }
+
+  if(filesFromClipboard.length){
+    const dropInPreview = document.activeElement && (document.activeElement === canvasWrap || canvasWrap.contains(document.activeElement));
+    addFiles(filesFromClipboard, dropInPreview);
+    e.preventDefault();
+    showToast('已添加粘贴图片');
+    return;
+  }
 });
 
 // 整页拖拽支持
