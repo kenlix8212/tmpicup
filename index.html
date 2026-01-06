@@ -84,6 +84,8 @@
         <button id="exportAll" class="btn">Save all（Ctrl+Enter）</button>
         <button id="exportOne" class="btn secondary">保存当前</button>
         <button id="clear" class="btn secondary">清空</button>
+        <!-- Debug helper: enlarge crop box beyond image to test padding -->
+        <button id="debugEnlarge" class="btn secondary">测试：扩大裁剪框</button>
       </div>
       <div class="muted">已选文件夹：<span id="folderPath">未选择</span></div>
       <hr>
@@ -470,6 +472,27 @@ ratioSel.addEventListener('change', ()=>{
 el('exportOne').addEventListener('click', ()=> exportCurrent(true).then(()=>showToast('已保存当前')));
 el('exportAll').addEventListener('click', exportAll);
 el('clear').addEventListener('click', clearAll);
+
+// Debug helper: programmatically enlarge crop box (useful to test cropping beyond image)
+el('debugEnlarge').addEventListener('click', ()=>{
+  if (!cropper) { showToast('请先选择图片'); return; }
+  try{
+    // Use current crop data and attempt to expand it significantly
+    const st = cropper.getData(true);
+    const ratio = parseFloat(ratioSel.value) || (st.width && st.height ? st.width / st.height : 1);
+    const newW = Math.max( Math.round(st.width * 3),  Math.round(sizeInput.value.split('x')[0]||1500) );
+    const newH = Math.round(newW / ratio);
+    const newX = Math.round(st.x - (newW - st.width)/2);
+    const newY = Math.round(st.y - (newH - st.height)/2);
+    // Try setData first (preferred), otherwise setCropBoxData
+    try{
+      cropper.setData({ x:newX, y:newY, width:newW, height:newH });
+    }catch(e){
+      try{ cropper.setCropBoxData({ left:newX, top:newY, width:newW, height:newH }); }catch(_){ throw _; }
+    }
+    showToast('已尝试扩大裁剪框（请查看是否超出）');
+  }catch(err){ console.warn(err); showToast('操作失败'); }
+});
 
 // 预览右键删除当前
 previewImg.addEventListener('contextmenu', (e)=>{
