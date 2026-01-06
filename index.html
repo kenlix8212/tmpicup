@@ -246,7 +246,7 @@ function setActive(i){
     previewImg.onload = ()=>{
       cropper = new Cropper(previewImg, {
         aspectRatio: parseFloat(ratioSel.value),
-        viewMode: 1,
+        viewMode: 0,
         autoCropArea: 1,
         background: false,
         ready(){
@@ -313,8 +313,43 @@ function parseSize(v){
 
 // ------- Export helpers -------
 async function canvasToJpegBlob(cropper, size, quality){
-  const canvas = cropper.getCroppedCanvas({ width:size.w, height:size.h });
-  return await new Promise(res=> canvas.toBlob(res, 'image/jpeg', quality));
+  // Support crop boxes that extend beyond the image bounds by drawing
+  // the source image onto a white canvas so the out-of-image areas become white.
+  try{
+    const data = cropper.getData(true); // crop box in image pixels
+    if(!data || !data.width || !previewImg || !previewImg.naturalWidth){
+      // Fallback to Cropper's built-in method if anything is missing
+      const canvas = cropper.getCroppedCanvas({ width:size.w, height:size.h });
+      return await new Promise(res=> canvas.toBlob(res, 'image/jpeg', quality));
+    }
+
+    // scale factors to map crop box -> output size
+    const scaleX = size.w / data.width;
+    const scaleY = size.h / data.height;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = size.w;
+    canvas.height = size.h;
+    const ctx = canvas.getContext('2d');
+
+    // fill white background for padded areas
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // draw the full source image scaled so that the crop rect aligns with the output
+    const drawWidth = previewImg.naturalWidth * scaleX;
+    const drawHeight = previewImg.naturalHeight * scaleY;
+    const drawX = -data.x * scaleX;
+    const drawY = -data.y * scaleY;
+
+    ctx.drawImage(previewImg, drawX, drawY, drawWidth, drawHeight);
+
+    return await new Promise(res=> canvas.toBlob(res, 'image/jpeg', quality));
+  }catch(e){
+    console.warn('Custom canvas export failed, fallback to getCroppedCanvas', e);
+    const canvas = cropper.getCroppedCanvas({ width:size.w, height:size.h });
+    return await new Promise(res=> canvas.toBlob(res, 'image/jpeg', quality));
+  }
 }
 
 async function ensureSubdir(handle, subdir){
